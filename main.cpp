@@ -104,6 +104,14 @@ int main(int argc, char** argv) {
 						 codecContext->width, codecContext->height, AV_PIX_FMT_RGB24,
 						 SWS_BILINEAR, nullptr, nullptr, nullptr);
 
+  if(noFramesToExtract > formatContext->streams[videoStreamIndex]->nb_frames) {
+    fprintf(stderr, "No of frames given is larger than the no of frames in the input video stream\n");
+    sws_freeContext(swsContext);
+    avcodec_free_context(&codecContext);
+    avformat_close_input(&formatContext);
+    return 1;
+  }
+
   AVPacket packet;
   int i = 0, counter = 0;
 
