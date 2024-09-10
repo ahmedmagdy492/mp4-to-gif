@@ -8,12 +8,23 @@ extern "C" {
   #include <libavcodec/avcodec.h>
   #include <libavutil/imgutils.h>
   #include <libswscale/swscale.h>
+
+  #include <gif_lib.h>
+  
   #include "include/stb_image_write.h"
 }
 
 double TimeBaseToSeconds(AVStream* videoStream) {
   double time_base =  (double)videoStream->time_base.num / (double)videoStream->time_base.den;
   return (double)videoStream->duration * time_base;
+}
+
+void CreateColorMap(ColorMapObject *cmap) {
+  for(int i = 0;i < 256; ++i) {
+    cmap->Colors[i].Red = i;
+    cmap->Colors[i].Green = i;
+    cmap->Colors[i].Blue = i;
+  }
 }
 
 int main(int argc, char** argv) {
@@ -89,8 +100,10 @@ int main(int argc, char** argv) {
     avformat_close_input(&formatContext);
     return 1;
   }
-  
-  printf("Video size: %dx%d\n", formatContext->streams[videoStreamIndex]->codecpar->width, formatContext->streams[videoStreamIndex]->codecpar->height);
+
+  int width = formatContext->streams[videoStreamIndex]->codecpar->width;
+  int height = formatContext->streams[videoStreamIndex]->codecpar->height;
+  printf("Video size: %dx%d\n", width, height);
 
   if(avcodec_open2(codecContext, codec, nullptr) < 0) {
     fprintf(stderr, "unable to open the decoder\n");
@@ -114,6 +127,29 @@ int main(int argc, char** argv) {
 
   AVPacket packet;
   int i = 0, counter = 0;
+  const char* outputFile = "output/out.gif";
+  int errCode = 0;
+  
+  GifFileType* gifFile = EGifOpenFileName(outputFile, false, &errCode);
+
+  if(!gifFile) {
+    fprintf(stderr, "Cannot open gif file: %s\n", GifErrorString(errCode));
+  }
+
+  int noColors = 256;
+  ColorMapObject* colorMapObj = GifMakeMapObject(noColors, nullptr);
+
+  if(!colorMapObj) {
+    fprintf(stderr, "Cannot create a color map object\n");
+  }
+
+  CreateColorMap(colorMapObj);
+
+  int ret = EGifPutScreenDesc(gifFile, width, height, 8, 0, colorMapObj);
+
+  if(ret == GIF_ERROR) {
+    fprintf(stderr, "Cannot set screen description: %s\n", GifErrorString(ret));
+  }
 
   while(av_read_frame(formatContext, &packet) == 0 && counter < noFramesToExtract) {
     if(packet.stream_index == videoStreamIndex) {
@@ -132,11 +168,13 @@ int main(int argc, char** argv) {
 
 	sws_scale(swsContext, (uint8_t const* const*)frame->data, frame->linesize, 0, frame->height, rgbFrame->data, rgbFrame->linesize);
 
-	std::stringstream strstream;
-	strstream << "output/frame_" << counter+1 << ".png";
-	stbi_write_png(strstream.str().c_str(), frame->width, frame->height, 3, rgbFrame->data[0], rgbFrame->linesize[0]);
+	ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, colorMapObj);
 
-	printf("Extracted: %d out of %ld\n", counter+1, formatContext->streams[videoStreamIndex]->nb_frames);
+	ret = EGifPutLine(gifFile, rgbFrame->data[0], width * height);
+	
+	//stbi_write_png(strstream.str().c_str(), frame->width, frame->height, 3, rgbFrame->data[0], rgbFrame->linesize[0]);
+
+	printf("Extracted: %d out of %ld\n", counter+1, noFramesToExtract);
 	++counter;
 	
 	av_free(buffer);
@@ -148,6 +186,9 @@ int main(int argc, char** argv) {
     av_packet_unref(&packet);
     ++i;
   }
+
+  EGifCloseFile(gifFile, NULL);
+  GifFreeMapObject(colorMapObj);
 
   sws_freeContext(swsContext);
   avcodec_free_context(&codecContext);

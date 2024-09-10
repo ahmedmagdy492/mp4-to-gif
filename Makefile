@@ -1,5 +1,5 @@
 CPP=g++
-LIBS=-lavformat -lavcodec -lavutil -lswscale -lswresample -lavdevice -lstdc++
+LIBS=-lavformat -lavcodec -lavutil -lswscale -lswresample -lavdevice -lstdc++ -lgif
 CFLAGS=-g
 
 main:	main.cpp include/stb_image_write.h
