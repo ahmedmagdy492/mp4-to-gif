@@ -224,7 +224,6 @@ int main(int argc, char** argv) {
 	  for(int j = 0; j < height; ++j) {
 	    ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
 	  }
-	  //stbi_write_png("frame.png", width, height, 3, rgbFrame->data[0], rgbFrame->linesize[0]);
 	
 	  av_free(buffer);
 	  av_frame_free(&rgbFrame);
