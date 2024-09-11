@@ -1,5 +1,5 @@
 #include <cstdio>
-#include <string>
+#include <cstring>
 #include <sstream>
 #include <cstdlib>
 
@@ -20,12 +20,59 @@ double TimeBaseToSeconds(AVStream* videoStream) {
 }
 
 void CreateColorMap(ColorMapObject *cmap) {
-  for(int i = 0;i < 256; ++i) {
+  for(int i = 0; i < 256; ++i) {
     cmap->Colors[i].Red = i;
     cmap->Colors[i].Green = i;
     cmap->Colors[i].Blue = i;
   }
 }
+
+void ConvertRgbDataToColorMapObj(ColorMapObject* cmp, uint8_t* data, int size, int noColors) {
+  int addedColorsCount = 0;
+  for(int i = 0; i < size-2; ++i) {
+    bool colorFound = false;
+    for(int j = 0; j < addedColorsCount; ++j) {
+      if(cmp->Colors[j].Red == data[i] && cmp->Colors[j].Green == data[i+1] && cmp->Colors[j].Blue == data[i+2]) {
+	colorFound = true;
+      }
+    }
+    if(!colorFound && addedColorsCount < noColors) {
+      cmp->Colors[addedColorsCount].Red = data[i];
+      cmp->Colors[addedColorsCount].Green = data[i+1];
+      cmp->Colors[addedColorsCount].Blue = data[i+2];
+      ++addedColorsCount;
+    }
+  }
+}
+
+#include <gif_lib.h>
+
+// Example: Writing a Netscape loop extension
+
+int WriteNetscapeLoopExtension(GifFileType *gifFile, int loopCount) {
+    // Step 1: Write the Application Extension Leader
+    unsigned char nsAppId[] = {'N', 'E', 'T', 'S', 'C', 'A', 'P', 'E', '2', '.', '0'};
+    if (EGifPutExtensionLeader(gifFile, APPLICATION_EXT_FUNC_CODE) == GIF_ERROR) {
+        return GIF_ERROR;
+    }
+    if (EGifPutExtensionBlock(gifFile, sizeof(nsAppId), nsAppId) == GIF_ERROR) {
+        return GIF_ERROR;
+    }
+
+    // Step 2: Write the Looping Sub-Block
+    unsigned char nsLoopBlock[] = {0x01, (unsigned char)(loopCount & 0xFF), (unsigned char)((loopCount >> 8) & 0xFF)};
+    if (EGifPutExtensionBlock(gifFile, sizeof(nsLoopBlock), nsLoopBlock) == GIF_ERROR) {
+        return GIF_ERROR;
+    }
+
+    // Step 3: Write the Block Terminator
+    if (EGifPutExtensionTrailer(gifFile) == GIF_ERROR) {
+        return GIF_ERROR;
+    }
+
+    return GIF_OK;
+}
+
 
 int main(int argc, char** argv) {
 
@@ -112,10 +159,12 @@ int main(int argc, char** argv) {
     return 1;
   }
 
+  //width /= 2;
+  //height /= 2;
   struct SwsContext* swsContext = sws_getContext(
 						 codecContext->width, codecContext->height, codecContext->pix_fmt,
-						 codecContext->width, codecContext->height, AV_PIX_FMT_RGB24,
-						 SWS_BILINEAR, nullptr, nullptr, nullptr);
+						 width, height, AV_PIX_FMT_RGB24,
+						 SWS_AREA, nullptr, nullptr, nullptr);
 
   if(noFramesToExtract > formatContext->streams[videoStreamIndex]->nb_frames) {
     fprintf(stderr, "No of frames given is larger than the no of frames in the input video stream\n");
@@ -145,13 +194,23 @@ int main(int argc, char** argv) {
 
   CreateColorMap(colorMapObj);
 
-  int ret = EGifPutScreenDesc(gifFile, width, height, 8, 0, colorMapObj);
+  EGifSetGifVersion(gifFile, true);
+
+  int ret = EGifPutScreenDesc(gifFile, width, height, 7, 0, colorMapObj);
 
   if(ret == GIF_ERROR) {
     fprintf(stderr, "Cannot set screen description: %s\n", GifErrorString(ret));
   }
 
-  while(av_read_frame(formatContext, &packet) == 0 && counter < noFramesToExtract) {
+  int loopCount = 0;
+  int res = WriteNetscapeLoopExtension(gifFile, loopCount);
+  if(res == GIF_ERROR) {
+    fprintf(stderr, "Cannot write loop extension block\n");
+  }
+
+  int frameLimiter = 0;
+
+  while(av_read_frame(formatContext, &packet) == 0 && frameLimiter < noFramesToExtract) {
     if(packet.stream_index == videoStreamIndex) {
       AVFrame * frame = av_frame_alloc();
     
@@ -161,24 +220,27 @@ int main(int argc, char** argv) {
       }
 
       if(avcodec_receive_frame(codecContext, frame) == 0) {
-	AVFrame* rgbFrame = av_frame_alloc();
-	int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, frame->width, frame->height, 1);
-	uint8_t* buffer = (uint8_t*)av_malloc(numBytes * sizeof(uint8_t));
-	av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer, AV_PIX_FMT_RGB24, frame->width, frame->height, 1);
+	if((frameLimiter % 2) == 0) {
+	  AVFrame* rgbFrame = av_frame_alloc();
+	  int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, width, height, 1);
+	  uint8_t* buffer = (uint8_t*)av_malloc(numBytes * sizeof(uint8_t));
+	  av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer, AV_PIX_FMT_RGB24, width, height, 1);
 
-	sws_scale(swsContext, (uint8_t const* const*)frame->data, frame->linesize, 0, frame->height, rgbFrame->data, rgbFrame->linesize);
+	  sws_scale(swsContext, (uint8_t const* const*)frame->data, frame->linesize, 0, height, rgbFrame->data, rgbFrame->linesize);
 
-	ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, colorMapObj);
+	  //ConvertRgbDataToColorMapObj(colorMapObj, rgbFrame->data[0], width*height, noColors);
 
-	ret = EGifPutLine(gifFile, rgbFrame->data[0], width * height);
+	  ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
+
+	  ret = EGifPutLine(gifFile, rgbFrame->data[0], width * height);
 	
-	//stbi_write_png(strstream.str().c_str(), frame->width, frame->height, 3, rgbFrame->data[0], rgbFrame->linesize[0]);
-
-	printf("Extracted: %d out of %ld\n", counter+1, noFramesToExtract);
-	++counter;
+	  //stbi_write_png("frame.png", width, height, 3, rgbFrame->data[0], rgbFrame->linesize[0]);
 	
-	av_free(buffer);
-	av_frame_free(&rgbFrame);
+	  av_free(buffer);
+	  av_frame_free(&rgbFrame);
+	  ++counter;
+	}
+	++frameLimiter;
       }
 
       av_frame_free(&frame);
