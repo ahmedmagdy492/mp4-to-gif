@@ -3,6 +3,8 @@
 #include <sstream>
 #include <cstdlib>
 
+#include "include/utils.h"
+
 extern "C" {
   #include <libavformat/avformat.h>
   #include <libavcodec/avcodec.h>
@@ -14,13 +16,15 @@ extern "C" {
   #include "include/stb_image_write.h"
 }
 
+#define FRAMES_DIFF_RATIO 50
+
 double TimeBaseToSeconds(AVStream* videoStream) {
   double time_base =  (double)videoStream->time_base.num / (double)videoStream->time_base.den;
   return (double)videoStream->duration * time_base;
 }
 
 void CreateColorMap(ColorMapObject *cmap) {
-  for(int i = 0; i < 254; ++i) {
+  for(int i = 0; i < 256; ++i) {
     cmap->Colors[i].Red = i;
     cmap->Colors[i].Green = i;
     cmap->Colors[i].Blue = i;
@@ -199,6 +203,7 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Cannot write loop extension block\n");
   }
 
+  uint8_t* prevFrame = new uint8_t[width * height * 3];
   int frameLimiter = 0;
 
   while(av_read_frame(formatContext, &packet) == 0 && frameLimiter < noFramesToExtract) {
@@ -206,30 +211,35 @@ int main(int argc, char** argv) {
       AVFrame * frame = av_frame_alloc();
     
       if(avcodec_send_packet(codecContext, &packet) < 0) {
-	av_frame_free(&frame);
-	continue;
+      	av_frame_free(&frame);
+	      continue;
       }
 
       if(avcodec_receive_frame(codecContext, frame) == 0) {
-	if((frameLimiter % 2) == 0) {
-	  AVFrame* rgbFrame = av_frame_alloc();
-	  int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, width, height, 1);
-	  uint8_t* buffer = (uint8_t*)av_malloc(numBytes * sizeof(uint8_t));
-	  av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer, AV_PIX_FMT_RGB24, width, height, 1);
+        //int subsquentFramesDiff = (int)GetFramesRepeatRatio(prevFrame, frame->data[0], width * height * 3);
+        
+        if((frameLimiter % 2) == 0) {
+          AVFrame* rgbFrame = av_frame_alloc();
+          int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, width, height, 1);
+          uint8_t* buffer = (uint8_t*)av_malloc(numBytes * sizeof(uint8_t));
+          av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer, AV_PIX_FMT_RGB24, width, height, 1);
 
-	  sws_scale(swsContext, (uint8_t const* const*)frame->data, frame->linesize, 0, height, rgbFrame->data, frame->linesize);
+          sws_scale(swsContext, (uint8_t const* const*)frame->data, frame->linesize, 0, height, rgbFrame->data, frame->linesize);
 
-	  ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
+          ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
 
-	  for(int j = 0; j < height; ++j) {
-	    ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
-	  }
-	
-	  av_free(buffer);
-	  av_frame_free(&rgbFrame);
-	  ++counter;
-	}
-	++frameLimiter;
+          //memcpy(prevFrame, frame->data[0], width*height*3);
+          for(int j = 0; j < height; ++j) {
+            ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
+          }
+        
+          printf("Written frame %d out of %d frames\n", counter, noFramesToExtract);
+
+          av_free(buffer);
+          av_frame_free(&rgbFrame);
+          ++counter;
+        }
+        ++frameLimiter;
       }
 
       av_frame_free(&frame);
@@ -250,6 +260,8 @@ int main(int argc, char** argv) {
 
   EGifCloseFile(gifFile, NULL);
   GifFreeMapObject(colorMapObj);
+
+  delete[] prevFrame;
 
   sws_freeContext(swsContext);
   avcodec_free_context(&codecContext);
