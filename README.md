@@ -18,7 +18,5 @@ for more info visit this gitbook page:
 
 ```console
 $ make clear && make
-$ ./mp4-to-gif <mp4-video-path.mp4> <no-of-frames-to-extract>
+$ ./mp4-to-gif <mp4-video-path.mp4>
 ```
-
-NOTE: no of frames to extract should be less than the no of frames in the video
