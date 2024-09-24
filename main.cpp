@@ -18,34 +18,11 @@ extern "C" {
 
 #define FRAMES_DIFF_RATIO 50
 
-double TimeBaseToSeconds(AVStream* videoStream) {
-  double time_base =  (double)videoStream->time_base.num / (double)videoStream->time_base.den;
-  return (double)videoStream->duration * time_base;
-}
-
 void CreateColorMap(ColorMapObject *cmap) {
   for(int i = 0; i < 256; ++i) {
     cmap->Colors[i].Red = i;
     cmap->Colors[i].Green = i;
     cmap->Colors[i].Blue = i;
-  }
-}
-
-void ConvertRgbDataToColorMapObj(ColorMapObject* cmp, uint8_t* data, int size, int noColors) {
-  int addedColorsCount = 0;
-  for(int i = 0; i < size-2; ++i) {
-    bool colorFound = false;
-    for(int j = 0; j < addedColorsCount; ++j) {
-      if(cmp->Colors[j].Red == data[i] && cmp->Colors[j].Green == data[i+1] && cmp->Colors[j].Blue == data[i+2]) {
-	colorFound = true;
-      }
-    }
-    if(!colorFound && addedColorsCount < noColors) {
-      cmp->Colors[addedColorsCount].Red = data[i];
-      cmp->Colors[addedColorsCount].Green = data[i+1];
-      cmp->Colors[addedColorsCount].Blue = data[i+2];
-      ++addedColorsCount;
-    }
   }
 }
 
@@ -111,7 +88,6 @@ int main(int argc, char** argv) {
   }
 
   printf("Found a video stream\n");
-  printf("Video Duration: %f seconds\n", TimeBaseToSeconds(formatContext->streams[videoStreamIndex]));
   printf("Found %ld frames\n", formatContext->streams[videoStreamIndex]->nb_frames);
 
   if(formatContext->streams[videoStreamIndex]->codecpar->codec_id != AV_CODEC_ID_H264) {
@@ -156,14 +132,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  struct SwsContext* swsContext = sws_getContext(
-						 codecContext->width, codecContext->height, codecContext->pix_fmt,
-						 width, height, AV_PIX_FMT_RGB24,
-						 0, nullptr, nullptr, nullptr);
-
   if(noFramesToExtract > formatContext->streams[videoStreamIndex]->nb_frames) {
     fprintf(stderr, "No of frames given is larger than the no of frames in the input video stream\n");
-    sws_freeContext(swsContext);
     avcodec_free_context(&codecContext);
     avformat_close_input(&formatContext);
     return 1;
@@ -216,27 +186,13 @@ int main(int argc, char** argv) {
       }
 
       if(avcodec_receive_frame(codecContext, frame) == 0) {
-        //int subsquentFramesDiff = (int)GetFramesRepeatRatio(prevFrame, frame->data[0], width * height * 3);
-        
         if((frameLimiter % 2) == 0) {
-          AVFrame* rgbFrame = av_frame_alloc();
-          int numBytes = av_image_get_buffer_size(AV_PIX_FMT_RGB24, width, height, 1);
-          uint8_t* buffer = (uint8_t*)av_malloc(numBytes * sizeof(uint8_t));
-          av_image_fill_arrays(rgbFrame->data, rgbFrame->linesize, buffer, AV_PIX_FMT_RGB24, width, height, 1);
-
-          sws_scale(swsContext, (uint8_t const* const*)frame->data, frame->linesize, 0, height, rgbFrame->data, frame->linesize);
-
           ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
-
-          //memcpy(prevFrame, frame->data[0], width*height*3);
           for(int j = 0; j < height; ++j) {
             ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
           }
         
           printf("Written frame %d out of %d frames\n", counter, noFramesToExtract);
-
-          av_free(buffer);
-          av_frame_free(&rgbFrame);
           ++counter;
         }
         ++frameLimiter;
@@ -248,22 +204,11 @@ int main(int argc, char** argv) {
     ++i;
   }
 
-  for(int i = 0; i < gifFile->ImageCount; ++i) {
-    GraphicsControlBlock gcb = {};
-    DGifSavedExtensionToGCB(gifFile, i, &gcb);
-    gcb.DisposalMode = DISPOSE_DO_NOT;
-    gcb.UserInputFlag = 0;
-    gcb.DelayTime = 500;
-    
-    EGifGCBToSavedExtension(&gcb, gifFile, i);
-  }
-
   EGifCloseFile(gifFile, NULL);
   GifFreeMapObject(colorMapObj);
 
   delete[] prevFrame;
 
-  sws_freeContext(swsContext);
   avcodec_free_context(&codecContext);
   avformat_close_input(&formatContext);
   return 0;
