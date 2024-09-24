@@ -50,12 +50,10 @@ int WriteNetscapeLoopExtension(GifFileType *gifFile, int loopCount) {
 
 int main(int argc, char** argv) {
 
-  if(argc != 3) {
-    fprintf(stderr, "Usage: %s <video-name.mp4> <no-of-frames-to-extract>\n", argv[1]);
+  if(argc != 2) {
+    fprintf(stderr, "Usage: %s <video-name.mp4>\n", argv[1]);
     return 1;
   }
-
-  int noFramesToExtract = atoi(argv[2]);
 
   AVFormatContext* formatContext = nullptr;
   if(avformat_open_input(&formatContext, argv[1], nullptr, nullptr) < 0) {
@@ -125,6 +123,24 @@ int main(int argc, char** argv) {
   int height = formatContext->streams[videoStreamIndex]->codecpar->height;
   printf("Video size: %dx%d\n", width, height);
 
+  int noFrames = formatContext->streams[videoStreamIndex]->nb_frames;
+  printf("Found %d frames in this video\n", noFrames);
+  printf("from where do you want to put in the gif start 0 and end %d ?\n", noFrames);
+  int startFrameIndex = 0;
+  scanf("%d", &startFrameIndex);
+  printf("what is no of frames to include (max %d frame)?\n", noFrames);
+  int noFramesToExtract = 0;
+  scanf("%d", &noFramesToExtract);
+  printf("Cutting mp4 from %d and cutting %d frames\n", startFrameIndex, noFramesToExtract);
+  noFramesToExtract += startFrameIndex;
+
+  if(startFrameIndex < 0 || startFrameIndex >= noFramesToExtract || noFramesToExtract < 0 || noFramesToExtract > noFrames) {
+    fprintf(stderr, "Invalid frames range given\n");
+    avcodec_free_context(&codecContext);
+    avformat_close_input(&formatContext);
+    return 1;
+  }
+
   if(avcodec_open2(codecContext, codec, nullptr) < 0) {
     fprintf(stderr, "unable to open the decoder\n");
     avcodec_free_context(&codecContext);
@@ -132,15 +148,8 @@ int main(int argc, char** argv) {
     return 1;
   }
 
-  if(noFramesToExtract > formatContext->streams[videoStreamIndex]->nb_frames) {
-    fprintf(stderr, "No of frames given is larger than the no of frames in the input video stream\n");
-    avcodec_free_context(&codecContext);
-    avformat_close_input(&formatContext);
-    return 1;
-  }
-
   AVPacket packet;
-  int i = 0, counter = 0;
+  int i = 0;
   const char* outputFile = "output/out.gif";
   int errCode = 0;
   
@@ -173,10 +182,10 @@ int main(int argc, char** argv) {
     fprintf(stderr, "Cannot write loop extension block\n");
   }
 
-  uint8_t* prevFrame = new uint8_t[width * height * 3];
-  int frameLimiter = 0;
+  int counter = 0;
+  printf("Converting mp4 to gif...\n");
 
-  while(av_read_frame(formatContext, &packet) == 0 && frameLimiter < noFramesToExtract) {
+  while(av_read_frame(formatContext, &packet) == 0) {
     if(packet.stream_index == videoStreamIndex) {
       AVFrame * frame = av_frame_alloc();
     
@@ -186,16 +195,13 @@ int main(int argc, char** argv) {
       }
 
       if(avcodec_receive_frame(codecContext, frame) == 0) {
-        if((frameLimiter % 2) == 0) {
+        if(counter >= startFrameIndex && counter < noFramesToExtract) {
           ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
           for(int j = 0; j < height; ++j) {
             ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
           }
-        
-          printf("Written frame %d out of %d frames\n", counter, noFramesToExtract);
-          ++counter;
         }
-        ++frameLimiter;
+        ++counter;
       }
 
       av_frame_free(&frame);
@@ -207,7 +213,7 @@ int main(int argc, char** argv) {
   EGifCloseFile(gifFile, NULL);
   GifFreeMapObject(colorMapObj);
 
-  delete[] prevFrame;
+  printf("Done: output/out.gif\n");
 
   avcodec_free_context(&codecContext);
   avformat_close_input(&formatContext);
