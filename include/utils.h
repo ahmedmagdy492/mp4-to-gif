@@ -9,7 +9,7 @@ float GetFramesRepeatRatio(uint8_t *frame1, uint8_t *frame2, size_t len) {
     float noOfNonZeroBytes = 0;
 
     for(int i = 0;i < len; ++i) {
-        int dif = abs(frame1[i]-frame2[i]);
+        int dif = frame1[i]-frame2[i];
         if(dif > 0) {
             ++noOfNonZeroBytes;
         } 

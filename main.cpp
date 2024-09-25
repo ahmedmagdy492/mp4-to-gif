@@ -16,7 +16,7 @@ extern "C" {
   #include "include/stb_image_write.h"
 }
 
-#define FRAMES_DIFF_RATIO 50
+#define FRAMES_DIFF_RATIO 80
 
 void CreateColorMap(ColorMapObject *cmap) {
   for(int i = 0; i < 256; ++i) {
@@ -183,6 +183,8 @@ int main(int argc, char** argv) {
   }
 
   int counter = 0;
+  u_int8_t* prevFrame = new u_int8_t[width * height];
+  bool hasCopiedPrevFrame = false;
   printf("Converting mp4 to gif...\n");
 
   while(av_read_frame(formatContext, &packet) == 0) {
@@ -195,10 +197,26 @@ int main(int argc, char** argv) {
       }
 
       if(avcodec_receive_frame(codecContext, frame) == 0) {
-        if(counter >= startFrameIndex && counter < noFramesToExtract) {
-          ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
-          for(int j = 0; j < height; ++j) {
-            ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
+        if(counter >= startFrameIndex && counter < noFramesToExtract && (counter % 2) == 0) {
+          if(!hasCopiedPrevFrame) {
+            hasCopiedPrevFrame = true;
+            memcpy(prevFrame, frame->data[0], width * height);
+
+            ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
+            for(int j = 0; j < height; ++j) {
+              ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
+            }
+          }
+          else {
+            hasCopiedPrevFrame = false;
+            int framesDiffRatio = GetFramesRepeatRatio(prevFrame, frame->data[0], width * height);
+
+            if(framesDiffRatio >= FRAMES_DIFF_RATIO) {
+              ret = EGifPutImageDesc(gifFile, 0, 0, width, height, false, nullptr);
+              for(int j = 0; j < height; ++j) {
+                ret = EGifPutLine(gifFile, frame->data[0] + width*j, width);
+              }
+            }
           }
         }
         ++counter;
@@ -212,6 +230,7 @@ int main(int argc, char** argv) {
 
   EGifCloseFile(gifFile, NULL);
   GifFreeMapObject(colorMapObj);
+  delete[] prevFrame;
 
   printf("Done: output/out.gif\n");
 
